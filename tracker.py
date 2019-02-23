@@ -6,6 +6,7 @@ import time
 import cv2
 import matplotlib.pyplot as plt
 import math
+from keras.models import load_model
 
 # vs = VideoStream(src=0, resolution=(800, 600)).start()
 vs = cv2.VideoCapture(0)
@@ -13,11 +14,14 @@ canvas = np.zeros((480, 640, 3), dtype = np.uint8)
 show_canvas = False
 calculated_histogram = False
 points = []
+model = load_model("model.h5")
+classes = ["bed", "bicycle", "brain", "broccoli", "bus", "cat", "dog", "house", "jacket", "star"]
+has_drawn = False
 
 far_points = deque(maxlen=10)
 def draw_rect(frame):
     rows, cols, _ = frame.shape
-    global hand_rect_one_x, hand_rect_one_y, hand_rect_two_x, hand_rect_two_y
+    global hand_rect_one_x, hand_rect_one_y
     hand_rect_one_x = np.array(
         [6 * rows / 20, 6 * rows / 20, 6 * rows / 20, 
         9 * rows / 20, 9 * rows / 20, 9 * rows / 20, 
@@ -34,7 +38,7 @@ def draw_rect(frame):
     for i in range(9):
         cv2.rectangle(frame, (hand_rect_one_y[i], hand_rect_one_x[i]),
                       (hand_rect_two_y[i], hand_rect_two_x[i]),
-                      (0, 255, 0), 1)
+                      (0, 255, 255), 2)
 
     return frame
 
@@ -106,6 +110,13 @@ def extract_fingertip(frame, histogram):
 
 
     return farthest_point
+def extract_drawn_contour(canvas):
+    canvas = cv2.cvtColor(canvas, cv2.COLOR_BGR2GRAY)
+    median = cv2.medianBlur(canvas, 9)
+    gaussian = cv2.GaussianBlur(median, (5, 5), 0)
+    _, thresh = cv2.threshold(gaussian, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    contour_list, _ = cv2.findContours(thresh.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+    return contour_list
 
 while True:
     key = cv2.waitKey(1)
@@ -124,6 +135,7 @@ while True:
         
         point = extract_fingertip(frame, histogram)
         if key == ord('x'):
+            has_drawn = False
             points.append(point)
         if len(points) >= 2:
             for i in range(len(points) - 1):
@@ -131,12 +143,7 @@ while True:
                 cv2.line(canvas, points[i], points[i+1], color=(255, 255, 255), thickness=5)
 
         if key == ord(' '):
-            print(canvas.shape)
-            canvas = cv2.cvtColor(canvas, cv2.COLOR_BGR2GRAY)
-            median = cv2.medianBlur(canvas, 9)
-            gaussian = cv2.GaussianBlur(median, (5, 5), 0)
-            _, thresh = cv2.threshold(gaussian, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            contour_list, _ = cv2.findContours(thresh.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+            contour_list = extract_drawn_contour(canvas)
             max_area = -1
             index = 0
             for i, cnt in enumerate(contour_list):
@@ -148,9 +155,16 @@ while True:
             x, y, w, h = cv2.boundingRect(cnt)
             img = canvas[y:y+h, x:x+w]
             img = cv2.resize(img, (28, 28))
+            predicted_class = classes[np.argmax(model.predict(np.reshape(img, (1,28,28,1))))]
+            
+            has_drawn = True
+            points = []
+            canvas = np.zeros((480, 640, 3), dtype = np.uint8)
 
-            plt.imshow(img, cmap='gray')
-            plt.show()
+    if has_drawn:
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(frame, predicted_class, (10, 400), font, 4, (0,255,0), thickness=5, lineType=cv2.LINE_AA)
+
 
     cv2.imshow("Frame", frame)
     if show_canvas:
